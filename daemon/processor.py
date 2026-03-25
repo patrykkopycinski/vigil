@@ -152,10 +152,19 @@ class FindingProcessor:
             if self._data_service:
                 await self._store_finding(finding)
             
+            # Pre-triage: attach Entity Analytics risk scores for Elastic findings
+            if finding.get("data_source") == "elastic":
+                finding = await self._attach_risk_scores(finding)
+
             # AI Triage (routed through LLM queue)
             if self.config.auto_triage_enabled:
                 finding = await self._triage_finding(finding)
-            
+
+            # Post-triage: closed-loop Elastic alert lifecycle
+            if finding.get("data_source") == "elastic":
+                await self._update_elastic_alert_after_triage(finding)
+                await self._create_kibana_case_for_finding(finding)
+
             # Enrichment
             if self.config.auto_enrich_enabled:
                 finding = await self._enrich_finding(finding)
@@ -247,6 +256,8 @@ Entity Context:
 - Users: {users}
 
 MITRE Predictions: {list(mitre.keys()) if mitre else 'None'}
+
+Risk Scores: {self._format_risk_scores(finding)}
 
 Provide your assessment in the following format:
 SEVERITY: [critical/high/medium/low]
@@ -443,6 +454,111 @@ REASONING: [Brief explanation]
         
         return None
     
+    def _format_risk_scores(self, finding: Dict[str, Any]) -> str:
+        """Format risk scores for the triage prompt."""
+        scores = (finding.get("metadata") or {}).get("risk_scores", {})
+        if not scores:
+            return "None available"
+        parts = []
+        for entity, data in scores.items():
+            score = data.get("risk_score")
+            level = data.get("risk_level", "Unknown")
+            if score is not None:
+                parts.append(f"{entity}: {score} ({level})")
+        return ", ".join(parts) if parts else "None available"
+
+    async def _attach_risk_scores(self, finding: Dict[str, Any]) -> Dict[str, Any]:
+        """Query Entity Analytics risk scores for entities in Elastic findings."""
+        try:
+            from services.elastic_service import ElasticService
+            svc = ElasticService.from_env()
+
+            entity_ctx = finding.get("entity_context") or {}
+            risk_scores = {}
+
+            for username in (entity_ctx.get("usernames") or [])[:3]:
+                try:
+                    risk_scores[f"user:{username}"] = svc.get_risk_score("user", username)
+                except Exception:
+                    pass
+
+            for hostname in (entity_ctx.get("hostnames") or [])[:3]:
+                try:
+                    risk_scores[f"host:{hostname}"] = svc.get_risk_score("host", hostname)
+                except Exception:
+                    pass
+
+            metadata = finding.setdefault("metadata", {})
+            metadata["risk_scores"] = risk_scores
+        except Exception as e:
+            logger.warning(f"Failed to attach risk scores: {e}")
+            finding.setdefault("metadata", {})["risk_scores"] = {}
+        return finding
+
+    async def _update_elastic_alert_after_triage(self, finding: Dict[str, Any]):
+        """Update Elastic alert status based on triage recommendation."""
+        try:
+            alert_uuid = (finding.get("metadata") or {}).get("alert_uuid")
+            if not alert_uuid:
+                return
+
+            action = finding.get("recommended_action", "")
+            status_map = {"dismiss": "closed", "investigate": "acknowledged", "monitor": "acknowledged"}
+            new_status = status_map.get(action)
+            if not new_status:
+                return
+
+            from services.elastic_service import ElasticService
+            svc = ElasticService.from_env()
+            result = svc.update_alert_status([alert_uuid], new_status)
+            finding.setdefault("metadata", {})["elastic_status_updated"] = new_status
+            logger.info(f"Elastic alert {alert_uuid} status updated to {new_status}")
+        except Exception as e:
+            logger.warning(f"Failed to update Elastic alert status: {e}")
+
+    async def _create_kibana_case_for_finding(self, finding: Dict[str, Any]):
+        """Create a linked Kibana case for escalated Elastic findings."""
+        try:
+            severity = (finding.get("severity") or "").lower()
+            confidence = finding.get("triage_confidence", 0)
+            should_create = severity in ("critical", "high") or confidence >= 0.70
+            if not should_create:
+                return
+
+            from services.elastic_service import ElasticService
+            svc = ElasticService.from_env()
+            if not svc.kibana_url:
+                return
+
+            title = finding.get("title", "Security Finding")
+            finding_id = finding.get("finding_id", "unknown")
+            entity_ctx = finding.get("entity_context") or {}
+            reasoning = finding.get("triage_reasoning", "")
+
+            description = (
+                f"**Vigil Finding:** {finding_id}\n\n"
+                f"**Severity:** {severity}\n"
+                f"**Confidence:** {confidence:.0%}\n\n"
+                f"**Entities:**\n"
+                f"- IPs: {entity_ctx.get('src_ips', [])}\n"
+                f"- Hosts: {entity_ctx.get('hostnames', [])}\n"
+                f"- Users: {entity_ctx.get('usernames', [])}\n\n"
+                f"**Triage Assessment:** {reasoning}"
+            )
+
+            result = svc.create_case(
+                title=f"[Vigil] {title}",
+                description=description,
+                severity=severity if severity in ("low", "medium", "high", "critical") else "medium",
+                tags=["vigil", "auto-created", finding.get("data_source", "elastic")],
+            )
+            case_id = result.get("id")
+            if case_id:
+                finding.setdefault("metadata", {})["kibana_case_id"] = case_id
+                logger.info(f"Created Kibana case {case_id} for finding {finding_id}")
+        except Exception as e:
+            logger.warning(f"Failed to create Kibana case: {e}")
+
     async def _evaluate_for_response(self, finding: Dict[str, Any]):
         """Evaluate if finding needs autonomous response."""
         severity = finding.get("severity", "").lower()

@@ -54,8 +54,8 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 
 | Category | Integrations | Tools |
 |----------|-------------|-------|
-| **SIEM** | Splunk | Natural language → SPL, search by IP/host/user, index listing |
-| **EDR / XDR** | CrowdStrike | Alert lookup, host isolation/unisolation, host status |
+| **SIEM** | Splunk, Elastic Security | NL→SPL/ES\|QL, search by IP/host/user, detection rule CRUD, exception lists, rule preview, Entity Analytics risk scores, asset criticality, closed-loop alert lifecycle, auto Kibana case linking, Agent Builder (custom tools & agents), Kibana deep links |
+| **EDR / XDR** | CrowdStrike, Elastic Defend | Host isolation/release, kill process, retrieve file, action status, Osquery live queries, alert lookup, host status |
 | **Threat Intel** | VirusTotal, Shodan, AlienVault OTX, MISP | Hash/IP/domain/URL reputation, host recon, pulse matching, IOC search |
 | **Sandbox** | Hybrid Analysis, Joe Sandbox, ANY.RUN | File submission, report retrieval, IOC extraction |
 | **Timeline** | Timesketch | Forensic timeline analysis, evidence export |
@@ -65,9 +65,9 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 | **Data Pipeline** | Cribl Stream | Log normalization, noise filtering, multi-destination routing |
 | **Core** | DeepTempo Findings, Approval, ATT&CK Layer, Tempo Flow | Built-in SOC operations |
 
-**Coming soon:** AWS Security Hub, Azure Sentinel, GCP Security, Okta, Microsoft Defender, SentinelOne, Carbon Black, PagerDuty.
+**Coming soon:** AWS Security Hub, GCP Security, Okta, Microsoft Defender, SentinelOne, Carbon Black, PagerDuty.
 
-MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mcp_config.json`. Add a new integration by dropping an MCP server into the `tools/` directory — or use the built-in Custom Integration Builder to generate one from API docs.  If you build an integration that you find useful, chances are someone else will as well.  Please contribute!
+MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mcp-config.json`. Add a new integration by dropping an MCP server into the `tools/` directory — or use the built-in Custom Integration Builder to generate one from API docs.  If you build an integration that you find useful, chances are someone else will as well.  Please contribute!
 
 ---
 
@@ -215,7 +215,7 @@ python daemon/main.py
                 ▼                              ▼
 ┌──────────────────────────┐  ┌────────────────────────────────────┐
 │     Backend Services     │  │          MCP Servers (30+)         │
-│  Detections (7,200+)     │  │  Splunk │ CrowdStrike │ VirusTotal │
+│  Detections (7,200+)     │  │  Elastic │ Splunk │ CrowdStrike   │
 │  Case Management         │  │  Shodan │ Jira │ Slack │ Cribl    │
 │  Approvals │ MITRE ATT&CK│  │  Timesketch │ MISP │ ANY.RUN      │
 │  Similarity Search       │  │  Hybrid Analysis │ Joe Sandbox    │
@@ -232,11 +232,13 @@ python daemon/main.py
 
 ## Additional Features 
 
+- **SOC Daemon** — Autonomous 24/7 monitoring service that polls multiple sources (Elastic, Splunk, CrowdStrike, webhooks), runs AI-powered triage with risk-aware scoring (Entity Analytics, asset criticality), closes or escalates alerts automatically, creates linked Kibana cases for escalated findings, and exports Prometheus metrics. Run headless with `python daemon/main.py`.
 - **Auto-Contributor** — Automated competitive research against proprietary AI security platforms. Analyzes a vendor's capabilities, maps gaps versus Vigil and the open-source ecosystem, and generates ready-to-file GitHub issues with acceptance criteria. The goal: make Vigil a superset of every proprietary AI SOC, one contribution at a time. See [`contrib/auto-contributor/`](contrib/README.md)
 - **Chat-Driven Case Management** — Build cases through natural language. Say "add this to case XYZ" and the system handles findings, activities, timelines, and MITRE tagging. [Learn more](docs/CHAT_CASE_MANAGEMENT.md)
 - **Detection Engineering** — 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) with coverage analysis, gap identification, and AI-assisted template generation. [Learn more](docs/DETECTION_ENGINEERING.md)
 - **Case Management** — Full lifecycle tracking with PDF reports
 - **Approval Workflow** — Human-in-the-loop with confidence-based automation (auto-approve above 0.90, require review below 0.85)
+- **Cross-Vendor Autonomous Response** — Multi-source alert correlation (Elastic + CrowdStrike + Splunk), confidence scoring, and vendor-aware isolation execution routed to the correct EDR API (Elastic Defend, CrowdStrike Falcon)
 - **AI Enrichment** — Automatic threat analysis cached per finding
 - **MITRE ATT&CK** — Technique mapping and Navigator layer visualization
 
@@ -298,7 +300,7 @@ Claude: ✓ Found 3 similar findings via embedding search
 | Doc | Contents |
 |-----|----------|
 | [docs/AGENTS.md](docs/AGENTS.md) | 12 SOC AI agents reference |
-| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | MCP integrations — Splunk, CrowdStrike, VirusTotal, 28+ tools |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | MCP integrations — Elastic, Splunk, CrowdStrike, VirusTotal, 28+ tools |
 | [docs/DETECTION_ENGINEERING.md](docs/DETECTION_ENGINEERING.md) | Detection engineering with 7,200+ rules |
 | [docs/CHAT_CASE_MANAGEMENT.md](docs/CHAT_CASE_MANAGEMENT.md) | Chat-driven case building guide |
 | [docs/CHAT_CASE_QUICK_REFERENCE.md](docs/CHAT_CASE_QUICK_REFERENCE.md) | Quick reference for chat commands |

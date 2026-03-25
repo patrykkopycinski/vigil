@@ -42,6 +42,7 @@ class DataPoller:
         
         # Polling state for each source
         self._splunk_state = PollState()
+        self._elastic_state = PollState()
         self._crowdstrike_state = PollState()
         self._azure_sentinel_state = PollState()
         self._aws_security_hub_state = PollState()
@@ -50,6 +51,7 @@ class DataPoller:
         
         # Services (lazy loaded)
         self._splunk_service = None
+        self._elastic_ingestion = None
         self._crowdstrike_service = None
         self._data_service = None
         self._azure_sentinel_service = None
@@ -60,6 +62,8 @@ class DataPoller:
         self.stats = {
             "splunk_polls": 0,
             "splunk_findings": 0,
+            "elastic_polls": 0,
+            "elastic_findings": 0,
             "crowdstrike_polls": 0,
             "crowdstrike_findings": 0,
             "azure_sentinel_polls": 0,
@@ -95,6 +99,15 @@ class DataPoller:
                     logger.info("Splunk service initialized")
                 except Exception as e:
                     logger.warning(f"Failed to initialize Splunk service: {e}")
+            
+            # Initialize Elastic Security service if configured
+            if is_integration_enabled('elastic-siem'):
+                try:
+                    from services.elastic_ingestion import ElasticIngestion
+                    self._elastic_ingestion = ElasticIngestion()
+                    logger.info("Elastic Security ingestion service initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Elastic Security service: {e}")
             
             # Initialize CrowdStrike service if configured
             if is_integration_enabled('crowdstrike'):
@@ -155,6 +168,11 @@ class DataPoller:
         if self._splunk_service:
             tasks.append(asyncio.create_task(
                 self._poll_splunk_loop(shutdown_event)
+            ))
+        
+        if self._elastic_ingestion:
+            tasks.append(asyncio.create_task(
+                self._poll_elastic_loop(shutdown_event)
             ))
         
         if self._crowdstrike_service:
@@ -318,6 +336,57 @@ class DataPoller:
             'mitre_predictions': {},
             'embedding': []
         }
+    
+    async def _poll_elastic_loop(self, shutdown_event: asyncio.Event):
+        """Poll Elastic Security for new alerts on interval."""
+        logger.info(f"Elastic Security polling loop started (interval: {self.config.elastic_interval}s)")
+        
+        while not shutdown_event.is_set():
+            try:
+                await self._poll_elastic()
+                self._elastic_state.last_poll_time = datetime.utcnow()
+            except Exception as e:
+                logger.error(f"Elastic Security polling error: {e}")
+                self.stats["errors"] += 1
+            
+            try:
+                await asyncio.wait_for(
+                    shutdown_event.wait(),
+                    timeout=self.config.elastic_interval
+                )
+                break
+            except asyncio.TimeoutError:
+                pass
+    
+    async def _poll_elastic(self):
+        """Poll Elastic Security for new alerts."""
+        if not self._elastic_ingestion:
+            return
+        
+        self.stats["elastic_polls"] += 1
+        logger.debug("Polling Elastic Security for new alerts...")
+        
+        try:
+            start_time = self._elastic_state.last_poll_time
+            alerts = await self._elastic_ingestion.fetch_alerts(
+                start_time=start_time,
+                limit=100
+            )
+            
+            new_count = 0
+            for alert in alerts:
+                finding = self._elastic_ingestion.transform_alert_to_finding(alert)
+                if finding and not self._elastic_state.is_processed(finding['finding_id']):
+                    await self._enqueue_finding(finding, "elastic")
+                    self._elastic_state.mark_processed(finding['finding_id'])
+                    new_count += 1
+            
+            if new_count > 0:
+                logger.info(f"Polled {new_count} new findings from Elastic Security")
+                self.stats["elastic_findings"] += new_count
+        except Exception as e:
+            logger.error(f"Elastic Security API error: {e}")
+            raise
     
     async def _poll_crowdstrike_loop(self, shutdown_event: asyncio.Event):
         """Poll CrowdStrike for new detections on interval."""

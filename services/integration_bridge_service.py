@@ -28,6 +28,7 @@ class IntegrationBridgeService:
         'microsoft-defender': 'microsoft-defender-server',
         
         # SIEM
+        'elastic-siem': 'elastic-security',
         'splunk': 'splunk-server',
         'azure-sentinel': 'azure-sentinel-server',
         
@@ -81,6 +82,9 @@ class IntegrationBridgeService:
         'organization_id': 'ORGANIZATION_ID',
         'project_id': 'PROJECT_ID',
         'verify_ssl': 'VERIFY_SSL',
+        'cloud_id': 'CLOUD_ID',
+        'kibana_url': 'KIBANA_URL',
+        'elasticsearch_url': 'URL',
         'port': 'PORT',
         'access_key_id': 'ACCESS_KEY_ID',
         'secret_access_key': 'SECRET_ACCESS_KEY',

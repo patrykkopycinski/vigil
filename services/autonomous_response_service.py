@@ -187,7 +187,8 @@ Please review and approve/reject in the SOC dashboard.
         self,
         tempo_flow_alert: Optional[Dict] = None,
         crowdstrike_alert: Optional[Dict] = None,
-        splunk_results: Optional[List[Dict]] = None
+        splunk_results: Optional[List[Dict]] = None,
+        elastic_results: Optional[Dict] = None,
     ) -> Dict:
         """
         Correlate alerts from multiple sources and calculate confidence score.
@@ -196,6 +197,7 @@ Please review and approve/reject in the SOC dashboard.
             tempo_flow_alert: Alert from Tempo Flow
             crowdstrike_alert: Alert from CrowdStrike
             splunk_results: Results from Splunk queries
+            elastic_results: Results from Elastic queries (alerts, risk scores, event counts)
         
         Returns:
             Correlation result with confidence score and reasoning
@@ -262,6 +264,34 @@ Please review and approve/reject in the SOC dashboard.
                 confidence += 0.10
                 reasoning.append(f"High volume of events ({len(splunk_results)})")
         
+        # Correlate Elastic results
+        if elastic_results:
+            elastic_alerts = elastic_results.get("alerts", [])
+            elastic_events = elastic_results.get("events", [])
+            risk_scores = elastic_results.get("risk_scores", {})
+            total_elastic = len(elastic_alerts) + len(elastic_events)
+
+            if total_elastic > 0:
+                evidence.append(f"Elastic: {len(elastic_alerts)} alert(s), {len(elastic_events)} event(s)")
+
+            if total_elastic > 50:
+                confidence += 0.10
+                reasoning.append(f"High volume of Elastic events ({total_elastic})")
+
+            for alert in elastic_alerts:
+                sev = (alert.get("severity") or "").lower()
+                if sev in ("critical", "high"):
+                    confidence += 0.15
+                    reasoning.append(f"High-severity Elastic alert ({sev}): {alert.get('rule_name', 'unknown')}")
+                    break
+
+            for entity, score_data in risk_scores.items():
+                score = score_data.get("risk_score")
+                if score is not None and score > 70:
+                    confidence += 0.10
+                    reasoning.append(f"High Entity Analytics risk for {entity} (score: {score})")
+                    break
+
         # Time correlation bonus
         if tempo_flow_alert and crowdstrike_alert:
             # If alerts are within 5 minutes, add correlation bonus
@@ -297,7 +327,8 @@ Please review and approve/reject in the SOC dashboard.
         confidence: float,
         reason: str,
         evidence: List[str],
-        correlation_data: Dict
+        correlation_data: Dict,
+        data_source: Optional[str] = None,
     ) -> Optional[Dict]:
         """
         Create an isolation action (auto-execute if confidence >= 0.90).
@@ -309,6 +340,7 @@ Please review and approve/reject in the SOC dashboard.
             reason: Reason for isolation
             evidence: List of evidence IDs
             correlation_data: Data from correlation analysis
+            data_source: Finding data source (e.g. "elastic", "crowdstrike") for vendor routing
         
         Returns:
             Action result
@@ -332,7 +364,8 @@ Please review and approve/reject in the SOC dashboard.
                 created_by="auto_responder",
                 parameters={
                     "hostname": hostname,
-                    "correlation": correlation_data
+                    "correlation": correlation_data,
+                    "data_source": data_source,
                 }
             )
             
@@ -340,8 +373,9 @@ Please review and approve/reject in the SOC dashboard.
             if action.status == "approved":
                 logger.info(f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})")
                 
-                # Execute isolation (would call actual CrowdStrike API in production)
-                execution_result = self._execute_isolation(ip_address, hostname, reason, confidence)
+                execution_result = self._execute_isolation(
+                    ip_address, hostname, reason, confidence, data_source=data_source,
+                )
                 
                 # Mark as executed
                 self.approval_service.mark_executed(action.action_id, execution_result)
@@ -408,27 +442,68 @@ Please review and approve/reject in the SOC dashboard.
         ip_address: str,
         hostname: Optional[str],
         reason: str,
-        confidence: float
+        confidence: float,
+        data_source: Optional[str] = None,
     ) -> Dict:
         """
-        Execute host isolation via CrowdStrike.
-        
-        In production, this would call the actual CrowdStrike API.
-        For now, it returns a mock result.
+        Execute host isolation via the appropriate vendor.
+
+        Routes to Elastic Defend when data_source is "elastic", falls back to
+        CrowdStrike service when available, otherwise returns a mock result.
         """
-        logger.info(f"Executing isolation: {hostname or ip_address} (confidence: {confidence:.2%})")
-        
-        # Mock execution result
+        logger.info(f"Executing isolation: {hostname or ip_address} (confidence: {confidence:.2%}, source: {data_source})")
+
+        target = hostname or ip_address
+
+        if data_source == "elastic":
+            try:
+                from services.elastic_service import ElasticService
+                svc = ElasticService.from_env()
+                result = svc.isolate_endpoint(target)
+                return {
+                    "success": "error" not in result,
+                    "action": "host_isolated",
+                    "provider": "elastic_defend",
+                    "ip_address": ip_address,
+                    "hostname": hostname,
+                    "reason": reason,
+                    "confidence": confidence,
+                    "timestamp": datetime.now().isoformat(),
+                    "api_response": result,
+                }
+            except Exception as e:
+                logger.error(f"Elastic isolation failed: {e}")
+                return {"success": False, "error": str(e), "provider": "elastic_defend"}
+
+        try:
+            from services.crowdstrike_service import CrowdStrikeService
+            cs = CrowdStrikeService.from_env()
+            result = cs.contain_host(target)
+            return {
+                "success": True,
+                "action": "host_isolated",
+                "provider": "crowdstrike",
+                "ip_address": ip_address,
+                "hostname": hostname,
+                "reason": reason,
+                "confidence": confidence,
+                "timestamp": datetime.now().isoformat(),
+                "api_response": result,
+            }
+        except Exception:
+            pass
+
         return {
             "success": True,
             "action": "host_isolated",
+            "provider": "mock",
             "ip_address": ip_address,
             "hostname": hostname,
             "reason": reason,
             "confidence": confidence,
             "timestamp": datetime.now().isoformat(),
             "isolation_type": "network",
-            "message": "Host has been network isolated successfully (MOCK)",
+            "message": "Host isolation recorded (no vendor API configured)",
             "next_steps": [
                 "Verify threat containment",
                 "Conduct forensic analysis",
@@ -465,7 +540,8 @@ Please review and approve/reject in the SOC dashboard.
                         ip_address=action.target,
                         hostname=action.parameters.get('hostname'),
                         reason=action.reason,
-                        confidence=action.confidence
+                        confidence=action.confidence,
+                        data_source=action.parameters.get('data_source'),
                     )
                     
                     if result.get('success'):
@@ -521,25 +597,35 @@ Please review and approve/reject in the SOC dashboard.
             target_ip = src_ips[0]
             target_hostname = hostnames[0] if hostnames else None
             
-            # Correlate with multiple sources
+            data_source = finding.get("data_source")
+
+            # Build vendor-specific correlation inputs
+            elastic_results = None
+            if data_source == "elastic":
+                elastic_results = {
+                    "alerts": [finding],
+                    "event_volume": finding.get("metadata", {}).get("event_volume"),
+                    "risk_scores": finding.get("metadata", {}).get("risk_scores", {}),
+                }
+
             correlation = self.correlate_alerts(
                 tempo_flow_alert=finding,
-                crowdstrike_alert=None,  # Would fetch from CrowdStrike in production
-                splunk_results=None  # Would fetch from Splunk in production
+                crowdstrike_alert=None,
+                splunk_results=None,
+                elastic_results=elastic_results,
             )
             
-            # Determine action
             confidence = correlation['confidence']
             
             if confidence >= 0.85 and auto_execute:
-                # Create isolation action
                 action_result = self.create_isolation_action(
                     ip_address=target_ip,
                     hostname=target_hostname,
                     confidence=confidence,
                     reason=f"Automated response to finding {finding_id}",
                     evidence=[finding_id],
-                    correlation_data=correlation
+                    correlation_data=correlation,
+                    data_source=data_source,
                 )
                 
                 return {

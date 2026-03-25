@@ -82,6 +82,21 @@
       }
     },
 
+    "elastic-security": {
+      "command": "python3",
+      "args": ["tools/elastic_security.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "ELASTIC_URL": "${ELASTIC_URL}",
+        "ELASTIC_API_KEY": "${ELASTIC_API_KEY}",
+        "ELASTIC_CLOUD_ID": "${ELASTIC_CLOUD_ID}",
+        "ELASTIC_USERNAME": "${ELASTIC_USERNAME}",
+        "ELASTIC_PASSWORD": "${ELASTIC_PASSWORD}",
+        "ELASTIC_VERIFY_SSL": "${ELASTIC_VERIFY_SSL}",
+        "KIBANA_URL": "${KIBANA_URL}"
+      }
+    },
+
     "splunk": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "${SPLUNK_MCP_URL}"],

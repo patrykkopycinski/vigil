@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class PollingConfig:
     """Configuration for data source polling intervals."""
     splunk_interval: int = 300  # 5 minutes
+    elastic_interval: int = 300  # 5 minutes
     crowdstrike_interval: int = 60  # 1 minute
     generic_interval: int = 120  # 2 minutes for other sources
     webhook_enabled: bool = True
@@ -139,6 +140,7 @@ class DaemonConfig:
         
         # Polling intervals
         config.polling.splunk_interval = int(os.getenv("DAEMON_SPLUNK_POLL_INTERVAL", "300"))
+        config.polling.elastic_interval = int(os.getenv("DAEMON_ELASTIC_POLL_INTERVAL", "300"))
         config.polling.crowdstrike_interval = int(os.getenv("DAEMON_CROWDSTRIKE_POLL_INTERVAL", "60"))
         config.polling.webhook_enabled = os.getenv("DAEMON_WEBHOOK_ENABLED", "true").lower() == "true"
         config.polling.webhook_port = int(os.getenv("DAEMON_WEBHOOK_PORT", "8081"))

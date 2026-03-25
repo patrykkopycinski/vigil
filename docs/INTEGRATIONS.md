@@ -36,10 +36,10 @@ Backend tools are automatically enabled for web UI users via the Claude Agent SD
 | Core | deeptempo-findings, approval, attack-layer, tempo-flow | Implemented |
 | Community | GitHub, PostgreSQL | Active |
 | Detection Engineering | Security-Detections-MCP | Implemented |
-| SIEM | Splunk | Implemented |
+| SIEM | Splunk, **Elastic Security (34 tools)** | Implemented |
 | Timeline | Timesketch | Implemented |
 | Threat Intel | VirusTotal, Shodan, AlienVault OTX, MISP, URL Analysis, IP Geolocation | Implemented |
-| EDR | CrowdStrike | Implemented |
+| EDR | CrowdStrike, **Elastic Defend** | Implemented |
 | Sandbox | Hybrid Analysis, Joe Sandbox, ANY.RUN | Implemented |
 | Ticketing | Jira | Implemented |
 | Communication | Slack | Implemented |
@@ -159,6 +159,58 @@ Settings > Integrations > Splunk:
 | `natural_language_search` | Generate and execute |
 | `get_splunk_indexes` | List available indexes |
 
+## Elastic Security
+
+Full Elastic Security and Elastic Defend integration with 34 MCP tools — the most comprehensive vendor integration in Vigil.
+
+### Configuration
+
+```bash
+ELASTIC_API_KEY="your_api_key"
+KIBANA_URL="https://kibana.example.com:5601"
+```
+
+Settings > Integrations > Elastic Security (SIEM):
+- Elasticsearch URL or Cloud ID
+- API Key (recommended) or Username/Password
+- Kibana URL (enables deep links and response actions)
+
+### MCP Tools (34)
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **Search & Query** | `search_alerts`, `search_events`, `search_entities`, `run_esql`, `nl_to_esql` | Alert search, ES\|QL queries, NL→ES\|QL generation, entity search by IP/user/host/domain/hash |
+| **Alert Management** | `get_alert_details`, `update_alert_status` | Alert details with Kibana deep links, workflow status (open/acknowledged/closed) |
+| **Entity Analytics** | `get_risk_score`, `get_asset_criticality` | Entity Analytics risk scores, asset criticality levels |
+| **Case Management** | `create_case` | Create Kibana cases with auto-linking |
+| **Response Actions** | `isolate_endpoint`, `release_endpoint`, `kill_process`, `get_file`, `get_action_status` | Elastic Defend endpoint isolation/release, process kill, file retrieval, action status |
+| **Osquery** | `run_osquery`, `get_osquery_results` | Live Osquery queries with 5 pre-built packs (processes, connections, users, persistence, file_info) |
+| **Detection Rules** | `create_detection_rule`, `update_detection_rule`, `toggle_detection_rules`, `delete_detection_rule`, `get_detection_rules`, `preview_rule` | Full detection rule lifecycle — CRUD, enable/disable, dry-run preview |
+| **Exception Lists** | `create_exception` | Create exception lists with items for false positive suppression |
+| **Investigation** | `get_timeline`, `get_indices` | Investigation timelines, index/data stream discovery |
+| **Agent Builder** | `list_custom_tools`, `create_custom_tool`, `delete_custom_tool`, `test_custom_tool`, `list_custom_agents`, `create_custom_agent`, `delete_custom_agent`, `get_agent_builder_config` | Org-specific custom tools and agents via Kibana Agent Builder |
+
+### Kibana Deep Links
+
+When `KIBANA_URL` is configured, tools automatically include clickable links to:
+- Alerts → `/app/security/alerts`
+- Cases → `/app/security/cases/{id}`
+- Timelines → `/app/security/timelines`
+- Detection Rules → `/app/security/rules/id/{id}`
+- Entity Analytics → `/app/security/entity_analytics/users` or `/hosts`
+
+### Agent Builder
+
+Agent Builder tools let Vigil agents discover and use org-specific custom tools hosted in Kibana:
+
+```
+"List available custom tools in our Kibana Agent Builder"
+"Create an ES|QL tool called 'lateral-movement-from-ip' that queries for lateral movement patterns"
+"Test the custom tool with: find lateral movement from 10.0.0.5"
+```
+
+Custom tools are managed in Kibana's UI and invoked from Vigil — no code changes needed.
+
 ## Timesketch
 
 Forensic timeline analysis.
@@ -252,6 +304,12 @@ CS_CLIENT_SECRET="your_client_secret"
 ```
 
 Tools: `get_crowdstrike_alert_by_ip`, `crowdstrike_foundry_isolate`, `crowdstrike_foundry_unisolate`, `get_host_status`
+
+### Elastic Defend
+
+Elastic Defend response actions are part of the **elastic-security** MCP server (see [Elastic Security](#elastic-security) above).
+
+Tools: `isolate_endpoint`, `release_endpoint`, `kill_process`, `get_file`, `get_action_status`, `run_osquery`, `get_osquery_results`
 
 ## Communication
 

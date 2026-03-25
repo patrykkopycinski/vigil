@@ -175,11 +175,13 @@ class MetricsServer:
             lines.append(f"# TYPE soc_daemon_poller_polls_total counter")
             lines.append(f'soc_daemon_poller_polls_total{{source="splunk"}} {poller.get("splunk_polls", 0)}')
             lines.append(f'soc_daemon_poller_polls_total{{source="crowdstrike"}} {poller.get("crowdstrike_polls", 0)}')
+            lines.append(f'soc_daemon_poller_polls_total{{source="elastic"}} {poller.get("elastic_polls", 0)}')
             
             lines.append(f"# HELP soc_daemon_poller_findings_total Total findings polled")
             lines.append(f"# TYPE soc_daemon_poller_findings_total counter")
             lines.append(f'soc_daemon_poller_findings_total{{source="splunk"}} {poller.get("splunk_findings", 0)}')
             lines.append(f'soc_daemon_poller_findings_total{{source="crowdstrike"}} {poller.get("crowdstrike_findings", 0)}')
+            lines.append(f'soc_daemon_poller_findings_total{{source="elastic"}} {poller.get("elastic_findings", 0)}')
             lines.append(f'soc_daemon_poller_findings_total{{source="webhook"}} {poller.get("webhook_findings", 0)}')
         
         # Processor metrics
