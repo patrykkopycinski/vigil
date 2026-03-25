@@ -101,7 +101,10 @@ def search_alerts(
     if rule_name:
         filters["rule_name"] = rule_name
 
-    alerts = svc.search_alerts(filters=filters, time_range=time_range, max_count=limit)
+    try:
+        alerts = svc.search_alerts(filters=filters, time_range=time_range, max_count=limit)
+    except Exception as e:
+        return error_response(f"Alert search failed: {str(e)}")
 
     results = []
     for alert in alerts:
@@ -225,7 +228,10 @@ def get_alert_details(alert_id: str) -> str:
     if err:
         return err
 
-    alert = svc.get_alert_by_id(alert_id)
+    try:
+        alert = svc.get_alert_by_id(alert_id)
+    except Exception as e:
+        return error_response(f"Alert lookup failed: {str(e)}")
     if not alert:
         return error_response(f"Alert not found: {alert_id}")
 

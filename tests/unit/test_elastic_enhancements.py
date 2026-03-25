@@ -928,13 +928,14 @@ class TestElasticServiceAlerts:
         assert svc.search_alerts() == []
 
     @patch("elasticsearch.Elasticsearch")
-    def test_search_alerts_error_returns_empty(self, mock_es_cls):
+    def test_search_alerts_error_raises(self, mock_es_cls):
         mock_client = MagicMock()
-        mock_client.search.side_effect = Exception("index not found")
+        mock_client.search.side_effect = Exception("connection refused")
         mock_es_cls.return_value = mock_client
 
         svc = _make_service()
-        assert svc.search_alerts() == []
+        with pytest.raises(Exception, match="connection refused"):
+            svc.search_alerts()
 
     @patch("elasticsearch.Elasticsearch")
     def test_get_alert_by_id_found(self, mock_es_cls):
@@ -2051,3 +2052,198 @@ class TestResetService:
         assert mod._elastic_service is not None
         _reset_service()
         assert mod._elastic_service is None
+
+
+class TestESQLSanitization:
+    """Tests for _sanitize_esql_value to prevent query injection/breakage."""
+
+    def test_escapes_double_quotes(self):
+        assert ElasticService._sanitize_esql_value('val"ue') == 'val\\"ue'
+
+    def test_escapes_backslash(self):
+        assert ElasticService._sanitize_esql_value("val\\ue") == "val\\\\ue"
+
+    def test_strips_pipe(self):
+        assert ElasticService._sanitize_esql_value("val|ue") == "value"
+
+    def test_strips_newlines(self):
+        assert ElasticService._sanitize_esql_value("val\nue\r") == "value"
+
+    def test_combined_injection_attempt(self):
+        payload = '"\n| DROP @timestamp'
+        sanitized = ElasticService._sanitize_esql_value(payload)
+        assert "|" not in sanitized
+        assert "\n" not in sanitized
+        assert '\\"' in sanitized
+
+    def test_clean_value_unchanged(self):
+        assert ElasticService._sanitize_esql_value("192.168.1.1") == "192.168.1.1"
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_search_by_ip_sanitizes_input(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        svc.search_by_ip('10.0.0.1" | DROP @timestamp')
+
+        query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+        assert '| DROP' not in query_arg
+        assert '\\"' in query_arg
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_search_by_domain_sanitizes_input(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        svc.search_by_domain('evil.com"\n|LIMIT 999999')
+
+        query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+        assert "\n" not in query_arg
+        assert "|LIMIT 999999" not in query_arg
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_search_by_hash_sanitizes_input(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        svc.search_by_hash('abc123"|DROP *')
+
+        query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+        assert "|DROP" not in query_arg
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_search_by_username_sanitizes_input(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        svc.search_by_username('admin"| EVAL x = 1')
+
+        query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+        assert "| EVAL" not in query_arg
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_search_by_hostname_sanitizes_input(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        svc.search_by_hostname('host"\r\n|STATS count()')
+
+        query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+        assert "\r" not in query_arg
+        assert "\n" not in query_arg
+        assert "|STATS" not in query_arg
+
+
+class TestEnrichCaseFailureHandling:
+    """Tests for enrich_case warning when note persistence fails."""
+
+    def _make_enrichment_service(self, update_case_rv=True):
+        from services.elastic_enrichment_service import ElasticEnrichmentService
+        es = _make_service()
+        data_svc = Mock()
+        data_svc.get_case.return_value = {
+            "id": "case-1",
+            "title": "Test Case",
+            "finding_ids": [],
+        }
+        data_svc.update_case.return_value = update_case_rv
+        enrichment = ElasticEnrichmentService(elastic_service=es)
+        enrichment.data_service = data_svc
+        return enrichment, data_svc
+
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.analyze_with_claude")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.get_threat_intelligence")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.get_risk_scores")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.query_elastic_for_indicators")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.extract_indicators")
+    def test_enrich_case_warns_on_save_failure(
+        self, mock_extract, mock_query, mock_risk, mock_ti, mock_claude
+    ):
+        mock_extract.return_value = {"ips": [], "domains": [], "hashes": [], "usernames": [], "hostnames": []}
+        mock_query.return_value = {"summary": {"total_events": 0}}
+        mock_risk.return_value = {}
+        mock_ti.return_value = []
+        mock_claude.return_value = "No significant findings."
+
+        enrichment, data_svc = self._make_enrichment_service(update_case_rv=False)
+
+        result = enrichment.enrich_case("case-1")
+        assert "warnings" in result
+        assert any("could not be saved" in w for w in result["warnings"])
+
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.analyze_with_claude")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.get_threat_intelligence")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.get_risk_scores")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.query_elastic_for_indicators")
+    @patch("services.elastic_enrichment_service.ElasticEnrichmentService.extract_indicators")
+    def test_enrich_case_no_warning_on_save_success(
+        self, mock_extract, mock_query, mock_risk, mock_ti, mock_claude
+    ):
+        mock_extract.return_value = {"ips": [], "domains": [], "hashes": [], "usernames": [], "hostnames": []}
+        mock_query.return_value = {"summary": {"total_events": 0}}
+        mock_risk.return_value = {}
+        mock_ti.return_value = []
+        mock_claude.return_value = "No significant findings."
+
+        enrichment, data_svc = self._make_enrichment_service(update_case_rv=True)
+
+        result = enrichment.enrich_case("case-1")
+        assert "warnings" not in result or not result.get("warnings")
+
+
+class TestMCPToolErrorSurfacing:
+    """Tests that MCP tools surface errors from search_alerts/get_alert_by_id."""
+
+    @patch("tools.elastic_security._require_service")
+    def test_search_alerts_tool_surfaces_connection_error(self, mock_req):
+        svc = Mock()
+        svc.search_alerts.side_effect = Exception("Connection refused")
+        mock_req.return_value = (svc, None)
+
+        from tools.elastic_security import search_alerts
+        result = search_alerts()
+        assert "Connection refused" in result
+        assert "failed" in result.lower()
+
+    @patch("tools.elastic_security._require_service")
+    def test_get_alert_details_tool_surfaces_auth_error(self, mock_req):
+        svc = Mock()
+        svc.get_alert_by_id.side_effect = Exception("401 Unauthorized")
+        svc.kibana_url = None
+        mock_req.return_value = (svc, None)
+
+        from tools.elastic_security import get_alert_details
+        result = get_alert_details(alert_id="abc-123")
+        assert "401 Unauthorized" in result
+        assert "failed" in result.lower()
+
+
+class TestESQLSanitizationInThreatIntelligence:
+    """Tests that get_threat_intelligence sanitizes IOC values."""
+
+    @patch("elasticsearch.Elasticsearch")
+    def test_ti_query_sanitizes_ip(self, mock_es_cls):
+        mock_client = MagicMock()
+        mock_client.esql.query.return_value = {"columns": [], "values": []}
+        mock_es_cls.return_value = mock_client
+
+        svc = _make_service()
+        from services.elastic_enrichment_service import ElasticEnrichmentService
+        enrichment = ElasticEnrichmentService(elastic_service=svc)
+
+        indicators = {"ips": ['1.2.3.4"| DROP *'], "domains": [], "hashes": []}
+        enrichment.get_threat_intelligence(indicators)
+
+        if mock_client.esql.query.called:
+            query_arg = mock_client.esql.query.call_args[1]["body"]["query"]
+            assert "| DROP" not in query_arg

@@ -131,85 +131,104 @@ class ElasticService:
         time_range: str = "-24h",
         max_count: int = 1000,
     ) -> List[Dict]:
-        """Search Elastic Security alerts in .alerts-security.alerts-default."""
-        try:
-            client = self._get_client()
-            filters = filters or {}
+        """Search Elastic Security alerts in .alerts-security.alerts-default.
 
-            must = []
-            must.append({"range": {"@timestamp": {"gte": f"now{time_range}"}}})
+        Raises on connection/auth errors so callers can surface them.
+        """
+        client = self._get_client()
+        filters = filters or {}
 
-            if filters.get("severity"):
-                must.append({"term": {"kibana.alert.severity": filters["severity"]}})
-            if filters.get("status"):
-                must.append({"term": {"kibana.alert.workflow_status": filters["status"]}})
-            if filters.get("rule_name"):
-                must.append({"match": {"kibana.alert.rule.name": filters["rule_name"]}})
-            if filters.get("mitre_technique"):
-                must.append({"term": {"threat.technique.id": filters["mitre_technique"]}})
+        must = []
+        must.append({"range": {"@timestamp": {"gte": f"now{time_range}"}}})
 
-            for entity_field, entity_key in [
-                ("source.ip", "source_ip"),
-                ("destination.ip", "destination_ip"),
-                ("user.name", "username"),
-                ("host.name", "hostname"),
-            ]:
-                if filters.get(entity_key):
-                    must.append({"term": {entity_field: filters[entity_key]}})
+        if filters.get("severity"):
+            must.append({"term": {"kibana.alert.severity": filters["severity"]}})
+        if filters.get("status"):
+            must.append({"term": {"kibana.alert.workflow_status": filters["status"]}})
+        if filters.get("rule_name"):
+            must.append({"match": {"kibana.alert.rule.name": filters["rule_name"]}})
+        if filters.get("mitre_technique"):
+            must.append({"term": {"threat.technique.id": filters["mitre_technique"]}})
 
-            body = {
-                "query": {"bool": {"must": must}},
-                "sort": [{"@timestamp": "desc"}],
-                "size": max_count,
-            }
+        for entity_field, entity_key in [
+            ("source.ip", "source_ip"),
+            ("destination.ip", "destination_ip"),
+            ("user.name", "username"),
+            ("host.name", "hostname"),
+        ]:
+            if filters.get(entity_key):
+                must.append({"term": {entity_field: filters[entity_key]}})
 
-            resp = client.search(index=".alerts-security.alerts-default", body=body)
-            return [hit["_source"] for hit in resp["hits"]["hits"]]
-        except Exception as e:
-            logger.error(f"Alert search error: {e}")
-            return []
+        body = {
+            "query": {"bool": {"must": must}},
+            "sort": [{"@timestamp": "desc"}],
+            "size": max_count,
+        }
+
+        resp = client.search(index=".alerts-security.alerts-default", body=body)
+        return [hit["_source"] for hit in resp["hits"]["hits"]]
 
     def get_alert_by_id(self, alert_uuid: str) -> Optional[Dict]:
-        """Fetch a single alert by kibana.alert.uuid."""
-        try:
-            client = self._get_client()
-            resp = client.search(
-                index=".alerts-security.alerts-default",
-                body={
-                    "query": {"term": {"kibana.alert.uuid": alert_uuid}},
-                    "size": 1,
-                },
-            )
-            hits = resp["hits"]["hits"]
-            return hits[0]["_source"] if hits else None
-        except Exception as e:
-            logger.error(f"Alert lookup error: {e}")
-            return None
+        """Fetch a single alert by kibana.alert.uuid.
+
+        Raises on connection/auth errors so callers can surface them.
+        """
+        client = self._get_client()
+        resp = client.search(
+            index=".alerts-security.alerts-default",
+            body={
+                "query": {"term": {"kibana.alert.uuid": alert_uuid}},
+                "size": 1,
+            },
+        )
+        hits = resp["hits"]["hits"]
+        return hits[0]["_source"] if hits else None
 
     # ── Entity Search (ES|QL) ────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize_esql_value(value: str) -> str:
+        """Escape a user-supplied value for safe interpolation into ES|QL strings.
+
+        Strips characters that could break out of a quoted string or alter
+        query semantics (double-quotes, backslashes, pipe operators, newlines).
+        """
+        return (
+            value
+            .replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("|", "")
+            .replace("\n", "")
+            .replace("\r", "")
+        )
 
     def _entity_esql(self, where_clause: str, hours: int) -> List[Dict]:
         query = f"FROM logs-* | WHERE {where_clause} AND @timestamp > NOW() - {hours} hours | LIMIT 1000"
         return self.run_esql(query)
 
     def search_by_ip(self, ip_address: str, hours: int = 24) -> List[Dict]:
+        safe = self._sanitize_esql_value(ip_address)
         return self._entity_esql(
-            f'source.ip == "{ip_address}" OR destination.ip == "{ip_address}"', hours
+            f'source.ip == "{safe}" OR destination.ip == "{safe}"', hours
         )
 
     def search_by_domain(self, domain: str, hours: int = 24) -> List[Dict]:
-        return self._entity_esql(f'dns.question.name == "{domain}"', hours)
+        safe = self._sanitize_esql_value(domain)
+        return self._entity_esql(f'dns.question.name == "{safe}"', hours)
 
     def search_by_hash(self, file_hash: str, hours: int = 24) -> List[Dict]:
+        safe = self._sanitize_esql_value(file_hash)
         return self._entity_esql(
-            f'file.hash.sha256 == "{file_hash}" OR file.hash.md5 == "{file_hash}"', hours
+            f'file.hash.sha256 == "{safe}" OR file.hash.md5 == "{safe}"', hours
         )
 
     def search_by_username(self, username: str, hours: int = 24) -> List[Dict]:
-        return self._entity_esql(f'user.name == "{username}"', hours)
+        safe = self._sanitize_esql_value(username)
+        return self._entity_esql(f'user.name == "{safe}"', hours)
 
     def search_by_hostname(self, hostname: str, hours: int = 24) -> List[Dict]:
-        return self._entity_esql(f'host.name == "{hostname}"', hours)
+        safe = self._sanitize_esql_value(hostname)
+        return self._entity_esql(f'host.name == "{safe}"', hours)
 
     # ── Index Discovery ──────────────────────────────────────────────────
 

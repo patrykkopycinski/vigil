@@ -143,24 +143,28 @@ class ElasticEnrichmentService:
 
     def get_threat_intelligence(self, indicators: Dict[str, List[str]]) -> Dict[str, Any]:
         ti_matches: Dict[str, Any] = {}
+        sanitize = ElasticService._sanitize_esql_value
         try:
             for ip in indicators.get('ips', [])[:10]:
+                safe = sanitize(ip)
                 results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.ip == "{ip}" | LIMIT 10'
+                    f'FROM logs-ti_*-* | WHERE threat.indicator.ip == "{safe}" | LIMIT 10'
                 )
                 if results:
                     ti_matches[f"ip:{ip}"] = results
 
             for domain in indicators.get('domains', [])[:10]:
+                safe = sanitize(domain)
                 results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.url.domain == "{domain}" | LIMIT 10'
+                    f'FROM logs-ti_*-* | WHERE threat.indicator.url.domain == "{safe}" | LIMIT 10'
                 )
                 if results:
                     ti_matches[f"domain:{domain}"] = results
 
             for file_hash in indicators.get('hashes', [])[:10]:
+                safe = sanitize(file_hash)
                 results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.file.hash.sha256 == "{file_hash}" OR threat.indicator.file.hash.md5 == "{file_hash}" | LIMIT 10'
+                    f'FROM logs-ti_*-* | WHERE threat.indicator.file.hash.sha256 == "{safe}" OR threat.indicator.file.hash.md5 == "{safe}" | LIMIT 10'
                 )
                 if results:
                     ti_matches[f"hash:{file_hash}"] = results
@@ -316,7 +320,10 @@ Provide a comprehensive analysis focusing on key findings, correlations, risk as
 
 ---
 """
-        self.data_service.update_case(case_id, notes=notes_entry)
+        if not self.data_service.update_case(case_id, notes=notes_entry):
+            logger.warning(f"Failed to save enrichment notes for case {case_id}")
+            enrichment_result['warnings'] = ['Enrichment notes could not be saved to the case']
+
         logger.info(f"Enrichment completed for case {case_id}")
         return enrichment_result
 

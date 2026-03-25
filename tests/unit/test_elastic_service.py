@@ -164,12 +164,12 @@ class TestSearchAlerts:
         must_clauses = call_body["query"]["bool"]["must"]
         assert len(must_clauses) == 3  # timestamp + severity + status
 
-    def test_returns_empty_on_error(self):
+    def test_raises_on_error(self):
         svc, mock_client = self._make_svc()
         mock_client.search.side_effect = Exception("network error")
 
-        alerts = svc.search_alerts()
-        assert alerts == []
+        with pytest.raises(Exception, match="network error"):
+            svc.search_alerts()
 
 
 class TestEntitySearch:
