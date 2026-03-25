@@ -203,8 +203,20 @@ class ElasticService:
         )
 
     def _entity_esql(self, where_clause: str, hours: int) -> List[Dict]:
+        """Run an entity search via ES|QL.
+
+        Returns [] if queried fields don't exist in the index mapping
+        (ES|QL raises verification_exception for unknown columns, unlike
+        query DSL which silently returns no matches).
+        """
         query = f"FROM logs-* | WHERE {where_clause} AND @timestamp > NOW() - {hours} hours | LIMIT 1000"
-        return self.run_esql(query)
+        try:
+            return self.run_esql(query)
+        except Exception as e:
+            if "verification_exception" in str(type(e).__name__).lower() or "unknown column" in str(e).lower():
+                logger.warning(f"ES|QL field not mapped, returning empty: {e}")
+                return []
+            raise
 
     def search_by_ip(self, ip_address: str, hours: int = 24) -> List[Dict]:
         safe = self._sanitize_esql_value(ip_address)
