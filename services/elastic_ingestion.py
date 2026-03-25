@@ -8,6 +8,7 @@ them to Vigil findings using ECS field mapping.
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
+from utils import nested_get
 
 from services.siem_ingestion_service import SIEMIngestionService
 from services.elastic_service import ElasticService
@@ -199,15 +200,4 @@ class ElasticIngestion(SIEMIngestionService):
             return None
 
 
-def _nested(d: dict, dotted_key: str, default=None):
-    """Safely navigate a nested dict with dot-separated keys."""
-    keys = dotted_key.split(".")
-    current = d
-    for k in keys:
-        if isinstance(current, dict):
-            current = current.get(k)
-        else:
-            return default
-        if current is None:
-            return default
-    return current
+_nested = nested_get

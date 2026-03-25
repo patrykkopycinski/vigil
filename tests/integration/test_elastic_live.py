@@ -316,7 +316,7 @@ class TestKibanaAPI:
         assert isinstance(rules, list)
 
     def test_get_detection_rules_with_filter(self, svc_with_kibana):
-        rules = svc_with_kibana.get_detection_rules(enabled_only=True)
+        rules = svc_with_kibana.get_detection_rules(filter_params={"enabled": True})
         assert isinstance(rules, list)
 
     def test_get_asset_criticality_returns_dict(self, svc_with_kibana):

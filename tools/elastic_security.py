@@ -10,6 +10,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools import create_server, json_response, error_response, get_config
+from utils import nested_get
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,11 @@ def search_alerts(
     severity: Optional[str] = None,
     status: Optional[str] = None,
     rule_name: Optional[str] = None,
+    source_ip: Optional[str] = None,
+    destination_ip: Optional[str] = None,
+    username: Optional[str] = None,
+    hostname: Optional[str] = None,
+    mitre_technique: Optional[str] = None,
     time_range: str = "-24h",
     limit: int = 50,
 ) -> str:
@@ -86,6 +92,11 @@ def search_alerts(
         severity: Filter by severity (critical, high, medium, low)
         status: Filter by workflow status (open, acknowledged, closed)
         rule_name: Filter by detection rule name
+        source_ip: Filter by source IP address
+        destination_ip: Filter by destination IP address
+        username: Filter by username
+        hostname: Filter by host name
+        mitre_technique: Filter by MITRE ATT&CK technique ID (e.g. T1059)
         time_range: Time range in Elastic datemath (default: -24h)
         limit: Maximum results (default: 50)
     """
@@ -100,6 +111,16 @@ def search_alerts(
         filters["status"] = status
     if rule_name:
         filters["rule_name"] = rule_name
+    if source_ip:
+        filters["source_ip"] = source_ip
+    if destination_ip:
+        filters["destination_ip"] = destination_ip
+    if username:
+        filters["username"] = username
+    if hostname:
+        filters["hostname"] = hostname
+    if mitre_technique:
+        filters["mitre_technique"] = mitre_technique
 
     try:
         alerts = svc.search_alerts(filters=filters, time_range=time_range, max_count=limit)
@@ -885,18 +906,7 @@ def get_agent_builder_config() -> str:
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
-def _nested_get(d: dict, dotted_key: str, default=None):
-    """Get a value from a nested dict using dot-notation key."""
-    keys = dotted_key.split(".")
-    current = d
-    for k in keys:
-        if isinstance(current, dict):
-            current = current.get(k)
-        else:
-            return default
-        if current is None:
-            return default
-    return current
+_nested_get = nested_get
 
 
 if __name__ == "__main__":

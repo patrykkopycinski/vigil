@@ -292,7 +292,7 @@ class ElasticService:
         """Query Entity Analytics risk engine for a user or host risk score."""
         try:
             client = self._get_client()
-            index = f"ml_host_risk_score_latest_default" if entity_type == "host" else "ml_user_risk_score_latest_default"
+            index = "ml_host_risk_score_latest_default" if entity_type == "host" else "ml_user_risk_score_latest_default"
             field = "host.name" if entity_type == "host" else "user.name"
 
             resp = client.search(
@@ -643,18 +643,17 @@ class ElasticService:
             client = self._get_client()
             indices = index_patterns or ["logs-*"]
             body = {
-                "query": {"query_string": {"query": query}},
+                "query": {
+                    "bool": {
+                        "must": [
+                            {"query_string": {"query": query}},
+                            {"range": {"@timestamp": {"gte": f"now{time_range}"}}},
+                        ]
+                    }
+                },
                 "sort": [{"@timestamp": "desc"}],
                 "size": 10,
                 "track_total_hits": True,
-            }
-            body["query"] = {
-                "bool": {
-                    "must": [
-                        {"query_string": {"query": query}},
-                        {"range": {"@timestamp": {"gte": f"now{time_range}"}}},
-                    ]
-                }
             }
             resp = client.search(index=",".join(indices), body=body)
             total = resp["hits"]["total"]

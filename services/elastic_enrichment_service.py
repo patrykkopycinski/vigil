@@ -144,32 +144,27 @@ class ElasticEnrichmentService:
     def get_threat_intelligence(self, indicators: Dict[str, List[str]]) -> Dict[str, Any]:
         ti_matches: Dict[str, Any] = {}
         sanitize = ElasticService._sanitize_esql_value
-        try:
-            for ip in indicators.get('ips', [])[:10]:
-                safe = sanitize(ip)
-                results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.ip == "{safe}" | LIMIT 10'
-                )
-                if results:
-                    ti_matches[f"ip:{ip}"] = results
 
-            for domain in indicators.get('domains', [])[:10]:
-                safe = sanitize(domain)
-                results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.url.domain == "{safe}" | LIMIT 10'
-                )
-                if results:
-                    ti_matches[f"domain:{domain}"] = results
+        queries = []
+        for ip in indicators.get('ips', [])[:10]:
+            safe = sanitize(ip)
+            queries.append((f"ip:{ip}", f'FROM logs-ti_*-* | WHERE threat.indicator.ip == "{safe}" | LIMIT 10'))
 
-            for file_hash in indicators.get('hashes', [])[:10]:
-                safe = sanitize(file_hash)
-                results = self.elastic_service.run_esql(
-                    f'FROM logs-ti_*-* | WHERE threat.indicator.file.hash.sha256 == "{safe}" OR threat.indicator.file.hash.md5 == "{safe}" | LIMIT 10'
-                )
+        for domain in indicators.get('domains', [])[:10]:
+            safe = sanitize(domain)
+            queries.append((f"domain:{domain}", f'FROM logs-ti_*-* | WHERE threat.indicator.url.domain == "{safe}" | LIMIT 10'))
+
+        for file_hash in indicators.get('hashes', [])[:10]:
+            safe = sanitize(file_hash)
+            queries.append((f"hash:{file_hash}", f'FROM logs-ti_*-* | WHERE threat.indicator.file.hash.sha256 == "{safe}" OR threat.indicator.file.hash.md5 == "{safe}" | LIMIT 10'))
+
+        for key, query in queries:
+            try:
+                results = self.elastic_service.run_esql(query)
                 if results:
-                    ti_matches[f"hash:{file_hash}"] = results
-        except Exception as e:
-            logger.warning(f"Threat intelligence enrichment failed (TI indices may not exist): {e}")
+                    ti_matches[key] = results
+            except Exception as e:
+                logger.warning(f"TI query failed for {key} (index may not exist): {e}")
 
         return ti_matches
 
